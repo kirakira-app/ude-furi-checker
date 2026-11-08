@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Runner Arm Swing Checker</title>
+    
+    <!-- MediaPipe Pose 関連 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js" crossorigin="anonymous"></script>
+    <!-- Tailwind CSS (スタイリング用) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        * { box-sizing: border-box; }
+        html, body { width:100%; height:100%; margin:0; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            overflow:hidden;
+            padding: clamp(6px, 1.2vh, 14px) clamp(8px, 1.5vw, 20px) !important;
+        }
+        .app-shell { height:100%; min-height:0; max-width:1100px !important; justify-content:flex-start; gap:clamp(3px, .6vh, 8px); }
+        h1 { font-size:clamp(20px, 3.2vh, 32px) !important; line-height:1.15; margin:0 0 2px !important; }
+        .intro { font-size:clamp(10px, 1.5vh, 14px) !important; line-height:1.35 !important; margin:0 0 4px !important; }
+        #video-container {
+            width:100%; flex:1 1 auto; min-height:0; max-height:calc(100dvh - 265px);
+            aspect-ratio:16/9; box-shadow:0 12px 20px -8px rgba(0,0,0,.18);
+        }
+        #output_canvas { width:100%; height:100%; object-fit:contain; display:block; }
+        .mode-picker { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:0; }
+        .mode-btn { border:3px solid transparent; border-radius:16px; padding:clamp(6px,1vh,10px) 16px; font-weight:800; font-size:clamp(12px,1.8vh,16px); cursor:pointer; box-shadow:0 5px 14px rgba(15,23,42,.12); transition:transform .15s, border-color .15s; }
+        .mode-btn:active { transform:scale(.98); }
+        .mode-btn.active { border-color:#1d4ed8; outline:3px solid rgba(59,130,246,.18); }
+        .mode-practice { background:#e0f2fe; color:#075985; }
+        .mode-challenge { background:#fef3c7; color:#92400e; }
+        #mode-note { margin:0; color:#475569; font-size:clamp(10px,1.4vh,13px); text-align:center; }
+        #controls { margin:0 !important; }
+        #start-btn { padding:clamp(8px,1.3vh,14px) 28px !important; font-size:clamp(13px,1.8vh,17px) !important; }
+        #status-card { margin:0 !important; padding:clamp(5px,.8vh,10px) !important; font-size:clamp(12px,1.7vh,17px) !important; }
+        #scoreboard { margin:0 !important; gap:6px !important; font-size:clamp(11px,1.6vh,15px) !important; }
+        #scoreboard > div { padding:6px 10px !important; border-radius:10px !important; }
+        #result-panel { position:absolute; z-index:30; left:50%; top:50%; transform:translate(-50%,-50%); width:min(90%,600px) !important; margin:0 !important; padding:14px !important; box-shadow:0 12px 40px #0005; }
+        @media (max-height:650px) { .intro { display:none; } #video-container { max-height:calc(100dvh - 190px); } }
+        @media (max-width:600px) { #video-container { max-height:calc(100dvh - 250px); } .mode-btn { padding:7px 11px; } }
+    </style>
+</head>
+<body class="min-h-screen py-8 px-4 flex flex-col items-center">
+
+    <div class="app-shell max-w-5xl w-full mx-auto flex flex-col items-center">
+        <h1 class="text-3xl md:text-4xl font-extrabold mb-3 text-slate-800 tracking-tight">🏃 腕振りチェッカー</h1>
+        <p class="intro text-slate-600 mb-8 text-center text-sm md:text-base leading-relaxed max-w-2xl">
+            「スタート」を押してカメラを許可してください。<br>
+            鏡を見るように画面に向かい、<strong class="text-blue-600">左右の風船に手が触れるように腕を前後に振りましょう。</strong><br>
+            肘の角度（約90度）や振りが不十分な場合、音で警告します。
+        </p>
+        
+        <div class="mode-picker" aria-label="モード選択">
+            <button id="practice-mode" class="mode-btn mode-practice active" type="button" aria-pressed="true">☁️ 練習モード</button>
+            <button id="challenge-mode" class="mode-btn mode-challenge" type="button" aria-pressed="false">🏁 チャレンジモード</button>
+        </div>
+        <p id="mode-note">練習モード：にじと雲のフレーム／音楽なし</p>
+
+        <div id="controls" class="mb-6 z-10">
+            <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-full shadow-lg transition-transform transform hover:scale-105 flex items-center gap-2 text-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                スタート (カメラを起動)
+            </button>
+        </div>
+        
+        <div id="status-card" class="hidden mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl transition-colors duration-300">
+            準備中...
+        </div>
+
+        <section id="scoreboard" style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:0 0 14px;font-weight:800;color:#17324d">
+          <div style="background:#fff;padding:10px 18px;border-radius:14px">左の成功 <span id="left-count">0</span></div>
+          <div style="background:#fff;padding:10px 18px;border-radius:14px">右の成功 <span id="right-count">0</span></div>
+          <div style="background:#fff;padding:10px 18px;border-radius:14px">お知らせ <span id="alert-count">0</span></div>
+          <div id="timer-box" style="background:#fff3c4;padding:10px 18px;border-radius:14px;display:none">残り <span id="timer">60</span> 秒</div>
+        </section>
+        <section id="result-panel" style="display:none;background:#fff;border:3px solid #f5b942;border-radius:20px;padding:20px;text-align:center;margin:12px 0;width:100%;max-width:760px">
+          <h2 style="font-size:26px;font-weight:900;margin:0 0 12px">チャレンジ終了！</h2>
+          <p style="font-size:18px;margin:6px">左の成功：<strong id="result-left">0</strong> 回</p>
+          <p style="font-size:18px;margin:6px">右の成功：<strong id="result-right">0</strong> 回</p>
+          <p style="font-size:18px;margin:6px">お知らせ：<strong id="result-alert">0</strong> 回</p>
+          <button id="retry-btn" type="button" style="margin-top:12px;background:#1769aa;color:white;border:0;border-radius:999px;padding:12px 24px;font-weight:800">もう一度</button>
+        </section>
+        <audio id="challenge-music" src="assets/Forward Motion.mp3" preload="auto"></audio>
+        <div id="video-container" class="w-full relative bg-slate-900 rounded-2xl overflow-hidden border-4 border-slate-300">
+            <!-- ローディングアニメーション -->
+            <div id="loading" class="absolute inset-0 flex flex-col items-center justify-center text-white hidden bg-slate-900/80 z-20">
+                <svg class="animate-spin h-12 w-12 text-blue-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="text-lg font-medium tracking-wider">AIモデルを読み込み中...</p>
+            </div>
+            
+            <!-- 処理用の非表示ビデオ要素と、描画用キャンバス -->
+            <video id="input_video" style="display: none;"></video>
+            <canvas id="output_canvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const loadingIndicator = document.getElementById('loading');
+        const statusCard = document.getElementById('status-card');
+        const practiceModeBtn = document.getElementById('practice-mode');
+        const challengeModeBtn = document.getElementById('challenge-mode');
+        const modeNote = document.getElementById('mode-note');
+
+        // 画面の飾り用フレーム。骨格検出や風船の判定には使用しません。
+        const frameImages = {
+            practice: new Image(),
+            challenge: new Image()
+        };
+        frameImages.practice.src = 'assets/frame-practice.png';
+        frameImages.challenge.src = 'assets/frame-challenge.png';
+        let selectedMode = 'practice';
+        let leftHits = 0, rightHits = 0, alertCount = 0;
+        let leftTouching = false, rightTouching = false, alertActive = false;
+        let challengeTimer = null, challengeEndAt = 0, challengeFinished = false;
+        let countdownTimer = null, countdownEndAt = 0, countdownActive = false, countdownLabel = '';
+        const music = document.getElementById('challenge-music');
+
+        function selectMode(mode) {
+            if (selectedMode === mode) return;
+            // モード変更時はチャレンジの時間・音楽を安全に終了し、判定回数をリセット
+            stopChallengeClock(true);
+            stopCountdown();
+            selectedMode = mode;
+            resetScore();
+            document.getElementById('timer-box').style.display = mode === 'challenge' ? 'block' : 'none';
+            document.getElementById('timer').textContent = '60';
+            const practiceSelected = mode === 'practice';
+            practiceModeBtn.classList.toggle('active', practiceSelected);
+            challengeModeBtn.classList.toggle('active', !practiceSelected);
+            practiceModeBtn.setAttribute('aria-pressed', String(practiceSelected));
+            challengeModeBtn.setAttribute('aria-pressed', String(!practiceSelected));
+            modeNote.textContent = practiceSelected
+                ? '練習モード：にじと雲のフレーム／音楽なし'
+                : 'チャレンジモード：スピードレーサーのフレーム／音楽つき60秒チャレンジ';
+            if (isRunning && mode === 'challenge') startChallengeCountdown();
+            if (isRunning && mode === 'practice') {
+                statusCard.textContent = '練習モードです。自由に腕を振ってみましょう。';
+            }
+        }
+        practiceModeBtn.addEventListener('click', () => selectMode('practice'));
+        challengeModeBtn.addEventListener('click', () => selectMode('challenge'));
+
+        let camera;
+        let pose;
+        let isRunning = false;
+        let firstFrame = true;
+
+        let audioCtx;
+        let lastBeepTime = 0;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playBeep() {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            
+            // 警告音が連続しすぎないように、1.5秒間隔を空ける
+            if (now - lastBeepTime < 1.5) return;
+            lastBeepTime = now;
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            // 目立つ警告音の設定
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.exponentialRampToValueAtTime(440, now + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.15, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            
+            osc.start(now);
+            osc.stop(now + 0.1);
+        }
+
+        class Balloon {
+            constructor(x, y, radius, color) {
+                this.baseX = x;
+                this.baseY = y;
+                this.x = x;
+                this.y = y;
+                this.baseRadius = radius;
+                this.color = color;
+                this.vx = 0;
+                this.vy = 0;
+                this.scale = 1.0;
+                this.vScale = 0;
+                this.hitTimer = 0;
+            }
+
+            update(hands) {
+                let touched = false;
+                if (this.hitTimer > 0) this.hitTimer--;
+
+                // 各手のポイントとの当たり判定
+                for (let hand of hands) {
+                    const dx = this.x - hand.x;
+                    const dy = this.y - hand.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const currentRadius = this.baseRadius * this.scale;
+                    
+                    // 当たり判定 (風船の半径 + 余裕をもたせた範囲)
+                    if (dist < currentRadius + 30) {
+                        touched = true;
+                        this.hitTimer = 15;
+                        
+                        // 風船を弾き飛ばす力
+                        const force = (currentRadius + 30 - dist) * 0.15;
+                        this.vx += (dx / dist) * force;
+                        this.vy += (dy / dist) * force;
+                        
+                        // 凹む表現
+                        this.scale -= 0.1;
+                        if (this.scale < 0.6) this.scale = 0.6;
+                    }
+                }
+
+                // バネのように元の位置とスケールに戻る力
+                this.vx += (this.baseX - this.x) * 0.05;
+                this.vy += (this.baseY - this.y) * 0.05;
+                this.vScale += (1.0 - this.scale) * 0.1;
+
+                // 摩擦による減衰
+                this.vx *= 0.85;
+                this.vy *= 0.85;
+                this.vScale *= 0.85;
+
+                this.x += this.vx;
+                this.y += this.vy;
+                this.scale += this.vScale;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.scale(this.scale, this.scale);
+                
+                ctx.beginPath();
+                ctx.arc(0, 0, this.baseRadius, 0, Math.PI * 2);
+                
+                // ヒット時は発光させる
+                if (this.hitTimer > 0) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.shadowColor = 'white';
+                    ctx.shadowBlur = 15;
+                } else {
+                    ctx.fillStyle = this.color;
+                    ctx.shadowBlur = 0;
+                }
+                
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                // 風船の結び目
+                ctx.beginPath();
+                ctx.moveTo(0, this.baseRadius);
+                ctx.lineTo(-8, this.baseRadius + 12);
+                ctx.lineTo(8, this.baseRadius + 12);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        let balloons = [];
+
+        // 3D座標から角度を計算する関数 (正面からの2D映像でも正確な肘の角度を測るため)
+        function calculateAngle3D(a, b, c) {
+            const ba = {x: a.x - b.x, y: a.y - b.y, z: a.z - b.z};
+            const bc = {x: c.x - b.x, y: c.y - b.y, z: c.z - b.z};
+            
+            const dot = ba.x * bc.x + ba.y * bc.y + ba.z * bc.z;
+            const magBA = Math.sqrt(ba.x * ba.x + ba.y * ba.y + ba.z * ba.z);
+            const magBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y + bc.z * bc.z);
+            
+            // ゼロ除算を回避
+            if (magBA === 0 || magBC === 0) return 0;
+            
+            let cosTheta = dot / (magBA * magBC);
+            // 浮動小数点誤差の対策
+            cosTheta = Math.max(-1.0, Math.min(1.0, cosTheta));
+            
+            return Math.acos(cosTheta) * (180.0 / Math.PI);
+        }
+
+        // 腕の振りを判定するための履歴管理
+        const HISTORY_SIZE = 30; // 約1秒間 (30fps換算)
+        let leftWristHistory = [];
+        let rightWristHistory = [];
+        let badFormFrames = 0;
+        let currentStatus = 'UNKNOWN';
+
+        function updateHistory(history, yPos) {
+            history.push(yPos);
+            if (history.length > HISTORY_SIZE) {
+                history.shift();
+            }
+        }
+
+        function checkSwingMovement(history) {
+            if (history.length < 15) return true; // データが貯まるまではOKとする
+            const max = Math.max(...history);
+            const min = Math.min(...history);
+            // 画面高さを1.0としたとき、0.03(3%)以上の上下変動があれば振っているとみなす
+            return (max - min) > 0.03;
+        }
+
+        function updateStatusUI(isGood, message) {
+            if (currentStatus === (isGood ? 'GOOD' : 'BAD') && !message) return;
+            
+            if (isGood) {
+                statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-green-100 text-green-800 border-2 border-green-500 shadow-md';
+                statusCard.innerHTML = '🟢 素晴らしいフォームです！腕がしっかり振れています。';
+                currentStatus = 'GOOD';
+            } else {
+                statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-red-100 text-red-800 border-2 border-red-500 shadow-md animate-pulse';
+                statusCard.innerHTML = '⚠️ 修正: ' + message;
+                currentStatus = 'BAD';
+            }
+        }
+
+        function updateScore() {
+            document.getElementById('left-count').textContent = leftHits;
+            document.getElementById('right-count').textContent = rightHits;
+            document.getElementById('alert-count').textContent = alertCount;
+        }
+        function resetScore() {
+            leftHits = rightHits = alertCount = 0;
+            leftTouching = rightTouching = alertActive = false;
+            challengeFinished = false;
+            updateScore();
+            document.getElementById('result-panel').style.display = 'none';
+        }
+        function stopChallengeClock(resetMusic = true) {
+            if (challengeTimer) clearInterval(challengeTimer);
+            challengeTimer = null;
+            music.pause();
+            music.volume = 1;
+            if (resetMusic) { try { music.currentTime = 0; } catch(e) {} }
+        }
+        function stopCountdown() {
+            if (countdownTimer) clearInterval(countdownTimer);
+            countdownTimer = null;
+            countdownActive = false;
+            countdownLabel = '';
+        }
+        function startChallengeCountdown() {
+            if (selectedMode !== 'challenge' || !isRunning || challengeTimer || countdownActive) return;
+            stopCountdown();
+            stopChallengeClock(true);
+            resetScore();
+            document.getElementById('timer-box').style.display = 'block';
+            document.getElementById('timer').textContent = '60';
+            countdownActive = true;
+            countdownEndAt = Date.now() + 4000;
+            statusCard.textContent = 'チャレンジ開始！準備してください。';
+            const tick = () => {
+                const left = Math.max(0, (countdownEndAt - Date.now()) / 1000);
+                countdownLabel = left > 3 ? '3' : left > 2 ? '2' : left > 1 ? '1' : left > 0 ? 'スタート！' : '';
+                if (left <= 0) {
+                    stopCountdown();
+                    startChallenge();
+                }
+            };
+            tick();
+            countdownTimer = setInterval(tick, 50);
+        }
+
+        function startChallenge() {
+            if (selectedMode !== 'challenge' || !isRunning || challengeTimer) return;
+            // 1回のチャレンジごとに、開始時点で成功回数・警告回数を必ず初期化する
+            resetScore();
+            challengeFinished = false;
+            document.getElementById('result-panel').style.display = 'none';
+            document.getElementById('timer-box').style.display = 'block';
+            challengeEndAt = Date.now() + 60000;
+            document.getElementById('timer').textContent = '60';
+            music.volume = 1;
+            music.currentTime = 0;
+            music.play().catch(() => { modeNote.textContent = '音楽を再生できません。端末の音量・設定を確認してください。'; });
+            challengeTimer = setInterval(() => {
+                const secondsLeft = Math.max(0, (challengeEndAt - Date.now()) / 1000);
+                const remaining = Math.ceil(secondsLeft);
+                document.getElementById('timer').textContent = remaining;
+                // 終了3秒前から、残り時間に比例して音量を下げる
+                music.volume = secondsLeft <= 3 ? Math.max(0, Math.min(1, secondsLeft / 3)) : 1;
+                if (secondsLeft <= 0) finishChallenge();
+            }, 50);
+        }
+        function finishChallenge() {
+            if (challengeFinished) return;
+            challengeFinished = true;
+            stopChallengeClock(true);
+            document.getElementById('result-left').textContent = leftHits;
+            document.getElementById('result-right').textContent = rightHits;
+            document.getElementById('result-alert').textContent = alertCount;
+            document.getElementById('result-panel').style.display = 'block';
+            statusCard.textContent = 'チャレンジ終了！結果を見てみましょう。';
+            statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-yellow-100 text-yellow-900 border-2 border-yellow-400';
+        }
+        document.getElementById('retry-btn').addEventListener('click', () => {
+            resetScore();
+            if (selectedMode === 'challenge' && isRunning) startChallengeCountdown();
+            else if (selectedMode === 'practice') statusCard.textContent = '練習を続けましょう。';
+        });
+
+        function onResults(results) {
+            if (challengeFinished) {
+                // 終了後は判定・加算を止め、最後の映像だけを表示
+            }
+            if (firstFrame) {
+                loadingIndicator.classList.add('hidden');
+                statusCard.classList.remove('hidden');
+                firstFrame = false;
+            }
+
+            // カメラ解像度に合わせてキャンバスサイズを調整し、風船を初期化
+            if (canvasElement.width !== results.image.width) {
+                canvasElement.width = results.image.width;
+                canvasElement.height = results.image.height;
+                
+                // 風船の間隔をさらに狭く調整 (画面中央寄りに配置)
+                const radius = canvasElement.height * 0.08;
+                balloons = [
+                    new Balloon(canvasElement.width * 0.43, canvasElement.height * 0.7, radius, 'rgba(255, 75, 75, 0.85)'), // 左
+                    new Balloon(canvasElement.width * 0.57, canvasElement.height * 0.7, radius, 'rgba(75, 139, 255, 0.85)')  // 右
+                ];
+            }
+
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 1. カメラ映像を左右反転（鏡面）にして描画
+            canvasCtx.save();
+            canvasCtx.scale(-1, 1);
+            canvasCtx.translate(-canvasElement.width, 0);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.restore();
+
+            let hands = [];
+
+            if (results.poseLandmarks) {
+                // 2. 鏡面描画に合わせるため、ランドマークのX座標を反転させた新しい配列を作成
+                const mirroredLandmarks = results.poseLandmarks.map(lm => ({
+                    x: 1 - lm.x,
+                    y: lm.y,
+                    z: lm.z,
+                    visibility: lm.visibility
+                }));
+
+                // 骨格の描画 (MediaPipe drawing_utils)
+                drawConnectors(canvasCtx, mirroredLandmarks, POSE_CONNECTIONS, {color: '#ffffff', lineWidth: 4});
+                drawLandmarks(canvasCtx, mirroredLandmarks, {color: '#3b82f6', lineWidth: 2, radius: 4});
+
+                // 風船との当たり判定用に、手（手首〜指先）の座標を収集
+                const handIndices = [15, 16, 17, 18, 19, 20, 21, 22];
+                handIndices.forEach(idx => {
+                    if (mirroredLandmarks[idx].visibility > 0.5) {
+                        hands.push({
+                            x: mirroredLandmarks[idx].x * canvasElement.width,
+                            y: mirroredLandmarks[idx].y * canvasElement.height
+                        });
+                    }
+                });
+
+                // 3. フォーム判定ロジック（カウントダウン中・終了後は判定しない）
+                if (!countdownActive && !challengeFinished) {
+                const p = results.poseLandmarks; 
+                const pw = results.poseWorldLandmarks || p; 
+                
+                const isLeftVisible = p[11].visibility > 0.5 && p[13].visibility > 0.5 && p[15].visibility > 0.5;
+                const isRightVisible = p[12].visibility > 0.5 && p[14].visibility > 0.5 && p[16].visibility > 0.5;
+
+                let leftBad = false, rightBad = false;
+                let leftAngle = 0, rightAngle = 0;
+                let leftSwinging = true, rightSwinging = true;
+                let currentBadForm = false;
+                let warningMessage = "";
+
+                if (isLeftVisible) {
+                    leftAngle = calculateAngle3D(pw[11], pw[13], pw[15]);
+                    updateHistory(leftWristHistory, p[15].y);
+                    leftSwinging = checkSwingMovement(leftWristHistory);
+                    if (leftAngle > 140 || leftAngle < 50) leftBad = true;
+                    if (!leftSwinging) leftBad = true;
+                } else {
+                    leftWristHistory = [];
+                }
+
+                if (isRightVisible) {
+                    rightAngle = calculateAngle3D(pw[12], pw[14], pw[16]);
+                    updateHistory(rightWristHistory, p[16].y);
+                    rightSwinging = checkSwingMovement(rightWristHistory);
+                    if (rightAngle > 140 || rightAngle < 50) rightBad = true;
+                    if (!rightSwinging) rightBad = true;
+                } else {
+                    rightWristHistory = [];
+                }
+
+                // 角度の数値を画面にオーバーレイ描画
+                canvasCtx.font = "bold 22px 'Inter', sans-serif";
+                canvasCtx.textAlign = "center";
+                if (isLeftVisible) {
+                    const lx = mirroredLandmarks[13].x * canvasElement.width;
+                    const ly = mirroredLandmarks[13].y * canvasElement.height;
+                    canvasCtx.fillStyle = leftBad ? '#ef4444' : '#22c55e';
+                    canvasCtx.fillText(Math.round(leftAngle) + "°", lx, ly - 20);
+                }
+                if (isRightVisible) {
+                    const rx = mirroredLandmarks[14].x * canvasElement.width;
+                    const ry = mirroredLandmarks[14].y * canvasElement.height;
+                    canvasCtx.fillStyle = rightBad ? '#ef4444' : '#22c55e';
+                    canvasCtx.fillText(Math.round(rightAngle) + "°", rx, ry - 20);
+                }
+
+                // 総合判定
+                if (isLeftVisible || isRightVisible) {
+                    if ((isLeftVisible && leftBad) || (isRightVisible && rightBad)) {
+                        currentBadForm = true;
+                        if ((leftBad && !leftSwinging) || (rightBad && !rightSwinging)) {
+                            warningMessage = "腕を固定せず、前後に大きく振ってください";
+                        } else {
+                            warningMessage = "肘の角度を約90度に保ってください";
+                        }
+                    }
+
+                    if (currentBadForm) {
+                        badFormFrames++;
+                        if (badFormFrames > 10) {
+                            updateStatusUI(false, warningMessage);
+                            if (!alertActive && !challengeFinished) { alertCount++; updateScore(); alertActive = true; }
+                            if (!challengeFinished) playBeep();
+                        }
+                    } else {
+                        badFormFrames = 0;
+                        alertActive = false;
+                        updateStatusUI(true, "");
+                    }
+                } else {
+                    if (currentStatus !== 'NO_PERSON') {
+                        statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-slate-200 text-slate-700 border-2 border-slate-300';
+                        statusCard.innerHTML = '👤 画面内に上半身が入るように立ってください';
+                        currentStatus = 'NO_PERSON';
+                    }
+                }
+                } // フォーム判定ゲートここまで
+            }
+
+            // 4. 風船への接触を左右別に数える（触れ続けている間は重複しない）
+            if (!challengeFinished && !countdownActive) {
+                const isTouch = (balloon) => hands.some(hand => Math.hypot(balloon.x-hand.x, balloon.y-hand.y) < balloon.baseRadius * balloon.scale + 30);
+                const lt = balloons.length > 0 && isTouch(balloons[0]);
+                const rt = balloons.length > 1 && isTouch(balloons[1]);
+                if (lt && !leftTouching) { leftHits++; updateScore(); }
+                if (rt && !rightTouching) { rightHits++; updateScore(); }
+                leftTouching = lt; rightTouching = rt;
+                balloons.forEach(balloon => { balloon.update(hands); balloon.draw(canvasCtx); });
+            } else {
+                balloons.forEach(balloon => balloon.draw(canvasCtx));
+            }
+
+            // 最後にフレームを重ねる。中央は透明なので、映像・骨格・風船は見えたままです。
+            const frame = frameImages[selectedMode];
+            if (frame && frame.complete && frame.naturalWidth > 0) {
+                canvasCtx.drawImage(frame, 0, 0, canvasElement.width, canvasElement.height);
+            }
+            // チャレンジ残り時間をフレーム右上に大きく表示
+            if (selectedMode === 'challenge' && isRunning) {
+                const remaining = challengeTimer ? Math.max(0, Math.ceil((challengeEndAt - Date.now()) / 1000)) : 60;
+                const label = String(remaining);
+                const boxW = Math.max(112, canvasElement.width * 0.14);
+                const boxH = Math.max(62, canvasElement.height * 0.14);
+                const x = canvasElement.width - boxW - canvasElement.width * 0.035;
+                const y = canvasElement.height * 0.035;
+                canvasCtx.save();
+                canvasCtx.fillStyle = 'rgba(12, 28, 55, 0.88)';
+                canvasCtx.strokeStyle = '#ffd54a';
+                canvasCtx.lineWidth = Math.max(3, canvasElement.width * 0.004);
+                canvasCtx.beginPath();
+                canvasCtx.roundRect(x, y, boxW, boxH, 16);
+                canvasCtx.fill(); canvasCtx.stroke();
+                canvasCtx.fillStyle = '#ffffff';
+                canvasCtx.textAlign = 'center'; canvasCtx.textBaseline = 'middle';
+                canvasCtx.font = `900 ${Math.max(38, canvasElement.height * 0.085)}px Arial, sans-serif`;
+                canvasCtx.fillText(label, x + boxW/2, y + boxH/2);
+                canvasCtx.restore();
+            }
+            // 練習開始前の3・2・1カウントダウン
+            if (countdownActive && countdownLabel) {
+                canvasCtx.save();
+                canvasCtx.fillStyle = 'rgba(8, 20, 40, 0.68)';
+                canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.fillStyle = '#ffffff';
+                canvasCtx.textAlign = 'center'; canvasCtx.textBaseline = 'middle';
+                canvasCtx.font = `900 ${Math.max(72, canvasElement.height * (countdownLabel === 'スタート！' ? 0.16 : 0.24))}px sans-serif`;
+                canvasCtx.shadowColor = '#000000'; canvasCtx.shadowBlur = 14;
+                canvasCtx.fillText(countdownLabel, canvasElement.width/2, canvasElement.height/2);
+                canvasCtx.restore();
+            }
+        }
+
+        startBtn.addEventListener('click', async () => {
+            if (isRunning) return;
+            isRunning = true;
+            resetScore();
+            document.getElementById('controls').classList.add('hidden');
+            loadingIndicator.classList.remove('hidden');
+            statusCard.classList.remove('hidden');
+            statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-blue-100 text-blue-800 border-2 border-blue-400';
+            statusCard.innerText = 'カメラとAIモデルを初期化中...';
+
+            initAudio();
+
+            pose = new Pose({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`;
+            }});
+            
+            pose.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                enableSegmentation: false,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            pose.onResults(onResults);
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({image: videoElement});
+                },
+                width: 1280,
+                height: 720
+            });
+
+            try {
+                await camera.start();
+                if (selectedMode === 'challenge') startChallengeCountdown();
+                else statusCard.textContent = '練習モードです。自由に腕を振ってみましょう。';
+            } catch (error) {
+                alert("カメラの起動に失敗しました。カメラへのアクセスを許可しているか確認してください。");
+                loadingIndicator.classList.add('hidden');
+                document.getElementById('controls').classList.remove('hidden');
+                isRunning = false;
+                stopCountdown();
+            }
+        });
+
+    </script>
+</body>
+</html>
