@@ -78,6 +78,7 @@
           <div style="background:#fff;padding:10px 18px;border-radius:14px">右の成功 <span id="right-count">0</span></div>
           <div style="background:#fff;padding:10px 18px;border-radius:14px">お知らせ <span id="alert-count">0</span></div>
           <div id="timer-box" style="background:#fff3c4;padding:10px 18px;border-radius:14px;display:none">残り <span id="timer">60</span> 秒</div>
+          <button id="end-challenge-btn" type="button" style="display:none;background:#dc2626;color:#fff;padding:9px 18px;border:0;border-radius:12px;font-weight:900;font-size:clamp(13px,1.7vh,16px);cursor:pointer">おわる</button>
         </section>
         <section id="result-panel" style="display:none;background:#fff;border:3px solid #f5b942;border-radius:20px;padding:20px;text-align:center;margin:12px 0;width:100%;max-width:760px">
           <h2 style="font-size:26px;font-weight:900;margin:0 0 12px">チャレンジ終了！</h2>
@@ -418,6 +419,7 @@
             stopChallengeClock(true);
             resetScore();
             document.getElementById('timer-box').style.display = 'block';
+            document.getElementById('end-challenge-btn').style.display = 'inline-block';
             document.getElementById('timer').textContent = '60';
             countdownActive = true;
             countdownEndAt = Date.now() + 4000;
@@ -441,6 +443,7 @@
             challengeFinished = false;
             document.getElementById('result-panel').style.display = 'none';
             document.getElementById('timer-box').style.display = 'block';
+            document.getElementById('end-challenge-btn').style.display = 'inline-block';
             challengeEndAt = Date.now() + 60000;
             document.getElementById('timer').textContent = '60';
             music.muted = false;
@@ -464,7 +467,9 @@
         function finishChallenge() {
             if (challengeFinished) return;
             challengeFinished = true;
+            stopCountdown();
             stopChallengeClock(true);
+            document.getElementById('end-challenge-btn').style.display = 'none';
             document.getElementById('result-left').textContent = leftHits;
             document.getElementById('result-right').textContent = rightHits;
             document.getElementById('result-alert').textContent = alertCount;
@@ -472,6 +477,10 @@
             statusCard.textContent = 'チャレンジ終了！結果を見てみましょう。';
             statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-yellow-100 text-yellow-900 border-2 border-yellow-400';
         }
+        document.getElementById('end-challenge-btn').addEventListener('click', () => {
+            // 「おわる」操作で音楽・カウントダウン・計測を停止し、結果を表示する
+            finishChallenge();
+        });
         document.getElementById('retry-btn').addEventListener('click', () => {
             resetScore();
             if (selectedMode === 'challenge' && isRunning) startChallengeCountdown();
