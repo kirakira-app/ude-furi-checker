@@ -21,7 +21,7 @@
             overflow:hidden;
             padding: clamp(6px, 1.2vh, 14px) clamp(8px, 1.5vw, 20px) !important;
         }
-        .app-shell { height:100%; min-height:0; max-width:1100px !important; justify-content:flex-start; gap:clamp(3px, .6vh, 8px); }
+        .app-shell { height:100%; min-height:0; max-width:1100px !important; justify-content:flex-start; gap:clamp(3px, .6vh, 8px); }\n        #home-screen { justify-content:center; gap:clamp(10px,2vh,22px); }\n        #camera-screen { justify-content:flex-start; }
         h1 { font-size:clamp(20px, 3.2vh, 32px) !important; line-height:1.15; margin:0 0 2px !important; }
         .intro { font-size:clamp(10px, 1.5vh, 14px) !important; line-height:1.35 !important; margin:0 0 4px !important; }
         #video-container {
@@ -48,7 +48,7 @@
 </head>
 <body class="min-h-screen py-8 px-4 flex flex-col items-center">
 
-    <div class="app-shell max-w-5xl w-full mx-auto flex flex-col items-center">
+    <div id="home-screen" class="app-shell max-w-5xl w-full mx-auto flex flex-col items-center">
         <h1 class="text-3xl md:text-4xl font-extrabold mb-3 text-slate-800 tracking-tight">🏃 腕振りチェッカー</h1>
         <p class="intro text-slate-600 mb-8 text-center text-sm md:text-base leading-relaxed max-w-2xl">
             「スタート」を押してカメラを許可してください。<br>
@@ -61,6 +61,14 @@
             <button id="challenge-mode" class="mode-btn mode-challenge" type="button" aria-pressed="false">🏁 チャレンジモード</button>
         </div>
         <p id="mode-note">練習モード：にじと雲のフレーム／音楽なし</p>
+    </div>
+
+    <div id="camera-screen" class="app-shell max-w-5xl w-full mx-auto flex flex-col items-center" style="display:none">
+        <div class="w-full flex items-center justify-between gap-2 mb-1">
+            <button id="back-home-btn" type="button" style="background:#e2e8f0;color:#1e293b;border:0;border-radius:12px;padding:8px 14px;font-weight:800;cursor:pointer">← モード選択へ</button>
+            <div id="camera-mode-title" style="font-weight:900;color:#1e293b;font-size:clamp(16px,2.4vh,24px)">☁️ 練習モード</div>
+        </div>
+
 
         <div id="controls" class="mb-6 z-10">
             <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-full shadow-lg transition-transform transform hover:scale-105 flex items-center gap-2 text-lg">
@@ -167,8 +175,33 @@
             }
         }
 
+        function stopCameraAndReturnHome() {
+            stopCountdown();
+            stopChallengeClock(true);
+            if (camera && typeof camera.stop === 'function') {
+                try { camera.stop(); } catch (e) {}
+            }
+            if (videoElement.srcObject) {
+                videoElement.srcObject.getTracks().forEach(track => track.stop());
+                videoElement.srcObject = null;
+            }
+            if (pose && typeof pose.close === 'function') {
+                try { pose.close(); } catch (e) {}
+            }
+            isRunning = false;
+            challengeFinished = false;
+            document.getElementById('end-challenge-btn').style.display = 'none';
+            document.getElementById('timer-box').style.display = 'none';
+            document.getElementById('result-panel').style.display = 'none';
+            statusCard.classList.add('hidden');
+            loadingIndicator.classList.add('hidden');
+            document.getElementById('controls').classList.remove('hidden');
+            document.getElementById('camera-screen').style.display = 'none';
+            document.getElementById('home-screen').style.display = 'flex';
+            firstFrame = true;
+        }
+
         function selectMode(mode) {
-            if (selectedMode === mode) return;
             // モード変更時はチャレンジの時間・音楽を安全に終了し、判定回数をリセット
             stopChallengeClock(true);
             stopCountdown();
@@ -187,10 +220,12 @@
             modeNote.textContent = practiceSelected
                 ? '練習モード：にじと雲のフレーム／音楽なし'
                 : 'チャレンジモード：スピードレーサーのフレーム／音楽つき60秒チャレンジ';
-            if (isRunning && mode === 'challenge') startChallengeCountdown();
-            if (isRunning && mode === 'practice') {
-                statusCard.textContent = '練習モードです。自由に腕を振ってみましょう。';
-            }
+            document.getElementById('camera-mode-title').textContent = practiceSelected ? '☁️ 練習モード' : '🏁 チャレンジモード';
+            document.getElementById('home-screen').style.display = 'none';
+            document.getElementById('camera-screen').style.display = 'flex';
+            document.getElementById('controls').classList.remove('hidden');
+            statusCard.classList.add('hidden');
+            document.getElementById('result-panel').style.display = 'none';
         }
         practiceModeBtn.addEventListener('click', () => selectMode('practice'));
         challengeModeBtn.addEventListener('click', () => selectMode('challenge'));
@@ -478,9 +513,13 @@
             statusCard.className = 'mb-6 p-4 rounded-xl w-full max-w-3xl text-center font-bold text-xl bg-yellow-100 text-yellow-900 border-2 border-yellow-400';
         }
         document.getElementById('end-challenge-btn').addEventListener('click', () => {
-            // 「おわる」操作で音楽・カウントダウン・計測を停止し、結果を表示する
-            finishChallenge();
+            // 「おわる」で音楽・計測・カメラを止め、最初のモード選択画面へ戻る
+            stopCameraAndReturnHome();
         });
+        document.getElementById('back-home-btn').addEventListener('click', stopCameraAndReturnHome);
+        document.getElementById('retry-btn').insertAdjacentHTML('afterend',
+            '<button id="result-home-btn" type="button" style="margin:12px 0 0 8px;background:#e2e8f0;color:#1e293b;border:0;border-radius:999px;padding:12px 24px;font-weight:800">最初の画面へ</button>');
+        document.getElementById('result-home-btn').addEventListener('click', stopCameraAndReturnHome);
         document.getElementById('retry-btn').addEventListener('click', () => {
             resetScore();
             if (selectedMode === 'challenge' && isRunning) startChallengeCountdown();
