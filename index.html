@@ -128,6 +128,21 @@
         let countdownTimer = null, countdownEndAt = 0, countdownActive = false, countdownLabel = '';
         const music = document.getElementById('challenge-music');
 
+        // 画面ロック・タブ切替・アプリのバックグラウンド化などで音楽を停止する。
+        // ロック解除後に意図せず再生が再開しないよう、自動再開は行わない。
+        function pauseMusicWhenPageInactive() {
+            if (music && !music.paused) {
+                music.pause();
+            }
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                pauseMusicWhenPageInactive();
+            }
+        });
+        window.addEventListener('pagehide', pauseMusicWhenPageInactive);
+        window.addEventListener('blur', pauseMusicWhenPageInactive);
+
         // iPhone/iPad Safari向け：最初のユーザー操作中に音楽要素を一度再生して
         // 再生許可を取得しておく（無音で行い、カウントダウン中は聞こえません）。
         function unlockChallengeMusic() {
