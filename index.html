@@ -186,7 +186,9 @@
         // 音楽はカメラ映像の準備とカウントダウンが終わるまで再生しない。
         // iOSでの事前再生による意図しない発音を防ぐ。
 
-        function stopCameraAndReturnHome() {
+        async function stopCameraAndReturnHome() {
+            // 先に処理ループを止め、音楽・タイマー・カメラを順番に解放する
+            isRunning = false;
             stopCountdown();
             stopChallengeClock(true);
             if (camera && typeof camera.stop === 'function') {
@@ -196,10 +198,16 @@
                 videoElement.srcObject.getTracks().forEach(track => track.stop());
                 videoElement.srcObject = null;
             }
+            videoElement.pause();
             if (pose && typeof pose.close === 'function') {
-                try { pose.close(); } catch (e) {}
+                try { await pose.close(); } catch (e) {}
             }
-            isRunning = false;
+            pose = null;
+            camera = null;
+            resolveCameraFrameReady = null;
+            cameraFrameReadyResolved = false;
+            // iOS Safariがカメラデバイスを解放するための短い待機
+            await new Promise(resolve => setTimeout(resolve, 300));
             challengeFinished = false;
             document.getElementById('end-challenge-btn').style.display = 'none';
             document.getElementById('timer-box').style.display = 'none';
@@ -249,6 +257,7 @@
         let camera;
         let pose;
         let isRunning = false;
+        let isStarting = false;
         let firstFrame = true;
         let resolveCameraFrameReady = null;
         let cameraFrameReadyResolved = false;
@@ -324,8 +333,12 @@
                         
                         // 風船を弾き飛ばす力
                         const force = (currentRadius + 30 - dist) * 0.15;
-                        this.vx += (dx / dist) * force;
-                        this.vy += (dy / dist) * force;
+                        // 手が風船の中心に重なった場合、0除算で座標がNaNになるのを防ぐ
+                        const safeDist = Math.max(dist, 0.001);
+                        const directionX = dist < 0.001 ? 0 : dx / safeDist;
+                        const directionY = dist < 0.001 ? -1 : dy / safeDist;
+                        this.vx += directionX * force;
+                        this.vy += directionY * force;
                         
                         // 凹む表現
                         this.scale -= 0.1;
@@ -449,6 +462,10 @@
         function resetScore() {
             leftHits = rightHits = alertCount = 0;
             leftTouching = rightTouching = alertActive = false;
+            leftWristHistory = [];
+            rightWristHistory = [];
+            badFormFrames = 0;
+            currentStatus = 'UNKNOWN';
             challengeFinished = false;
             updateScore();
             document.getElementById('result-panel').style.display = 'none';
@@ -603,7 +620,7 @@
                 // 風船との当たり判定用に、手（手首〜指先）の座標を収集
                 const handIndices = [15, 16, 17, 18, 19, 20, 21, 22];
                 handIndices.forEach(idx => {
-                    if (mirroredLandmarks[idx].visibility > 0.5) {
+                    if ((mirroredLandmarks[idx].visibility ?? 1) > 0.35) {
                         hands.push({
                             x: mirroredLandmarks[idx].x * canvasElement.width,
                             y: mirroredLandmarks[idx].y * canvasElement.height
@@ -696,7 +713,13 @@
 
             // 4. 風船への接触を左右別に数える（触れ続けている間は重複しない）
             if (!challengeFinished && !countdownActive) {
-                const isTouch = (balloon) => hands.some(hand => Math.hypot(balloon.x-hand.x, balloon.y-hand.y) < balloon.baseRadius * balloon.scale + 30);
+                // 接触判定は描画中の風船位置を使い、手首～指先のいずれかが触れたら反応
+                // 画面サイズに応じて余裕幅を調整し、iOSの低解像度映像でも検出しやすくする
+                const touchMargin = Math.max(30, canvasElement.height * 0.035);
+                const isTouch = (balloon) => hands.some(hand =>
+                    Math.hypot(balloon.x - hand.x, balloon.y - hand.y) <
+                    balloon.baseRadius * balloon.scale + touchMargin
+                );
                 const lt = balloons.length > 0 && isTouch(balloons[0]);
                 const rt = balloons.length > 1 && isTouch(balloons[1]);
                 if (lt && !leftTouching) { leftHits++; updateScore(); }
@@ -748,7 +771,25 @@
         }
 
         startBtn.addEventListener('click', async () => {
-            if (isRunning) return;
+            if (isRunning || isStarting) return;
+            isStarting = true;
+
+            // 前回のセッションが残っていれば完全に解放してから再起動
+            if (camera && typeof camera.stop === 'function') {
+                try { camera.stop(); } catch (e) {}
+            }
+            if (videoElement.srcObject) {
+                videoElement.srcObject.getTracks().forEach(track => track.stop());
+                videoElement.srcObject = null;
+            }
+            videoElement.pause();
+            if (pose && typeof pose.close === 'function') {
+                try { await pose.close(); } catch (e) {}
+            }
+            pose = null;
+            camera = null;
+            await new Promise(resolve => setTimeout(resolve, 300));
+
             isRunning = true;
             resetScore();
             document.getElementById('controls').classList.add('hidden');
@@ -818,8 +859,11 @@
                 await videoElement.play();
 
                 const sendFrame = async () => {
-                    if (!isRunning || !videoElement.srcObject || videoElement.readyState < 2) return;
-                    try { await pose.send({image: videoElement}); } catch (e) {}
+                    if (!isRunning || !videoElement.srcObject) return;
+                    if (videoElement.readyState >= 2 && pose) {
+                        try { await pose.send({image: videoElement}); } catch (e) {}
+                    }
+                    // readyStateが一時的に低くてもループを終了せず、次のフレームを待つ
                     if (isRunning) cameraAnimationId = requestAnimationFrame(sendFrame);
                 };
                 cameraAnimationId = requestAnimationFrame(sendFrame);
@@ -830,6 +874,7 @@
                 );
                 await Promise.race([firstFramePromise, frameTimeout]);
 
+                isStarting = false;
                 if (selectedMode === 'challenge') {
                     statusCard.textContent = '映像の準備ができました。カウントダウンします。';
                     startChallengeCountdown();
@@ -845,6 +890,7 @@
                 loadingIndicator.classList.add('hidden');
                 document.getElementById('controls').classList.remove('hidden');
                 isRunning = false;
+                isStarting = false;
                 resolveCameraFrameReady = null;
                 music.pause();
                 music.muted = true;
