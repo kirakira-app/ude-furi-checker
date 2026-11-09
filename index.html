@@ -107,7 +107,7 @@
             </div>
             
             <!-- 処理用の非表示ビデオ要素と、描画用キャンバス -->
-            <video id="input_video" style="display: none;"></video>
+            <video id="input_video" autoplay muted playsinline webkit-playsinline style="display:none;"></video>
             <canvas id="output_canvas"></canvas>
         </div>
     </div>
@@ -128,8 +128,8 @@
             practice: new Image(),
             challenge: new Image()
         };
-        frameImages.practice.src = 'assets/frame-practice.png';
-        frameImages.challenge.src = 'assets/frame-challenge.png';
+        frameImages.practice.src = './assets/frame-practice.png?v=3';
+        frameImages.challenge.src = './assets/frame-challenge.png?v=3';
         let selectedMode = 'practice';
         let leftHits = 0, rightHits = 0, alertCount = 0;
         let leftTouching = false, rightTouching = false, alertActive = false;
@@ -229,11 +229,19 @@
                 ? '練習モード：にじと雲のフレーム／音楽なし'
                 : 'チャレンジモード：スピードレーサーのフレーム／音楽つき60秒チャレンジ';
             document.getElementById('camera-mode-title').textContent = practiceSelected ? '☁️ 練習モード' : '🏁 チャレンジモード';
+            // モード切替時にフレーム描画を確実に更新
+            const selectedFrame = frameImages[mode];
+            if (selectedFrame && !selectedFrame.complete) {
+                selectedFrame.onload = () => {};
+            }
             document.getElementById('home-screen').style.display = 'none';
             document.getElementById('camera-screen').style.display = 'flex';
             document.getElementById('controls').classList.remove('hidden');
             statusCard.classList.add('hidden');
             document.getElementById('result-panel').style.display = 'none';
+            if (canvasElement.width && canvasElement.height) {
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            }
         }
         practiceModeBtn.addEventListener('click', () => selectMode('practice'));
         challengeModeBtn.addEventListener('click', () => selectMode('challenge'));
@@ -772,24 +780,53 @@
             
             pose.onResults(onResults);
 
-            camera = new Camera(videoElement, {
-                onFrame: async () => {
-                    await pose.send({image: videoElement});
-                },
-                width: 1280,
-                height: 720
-            });
+            let cameraStream = null;
+            let cameraAnimationId = null;
+            camera = {
+                stop: () => {
+                    if (cameraAnimationId !== null) cancelAnimationFrame(cameraAnimationId);
+                    cameraAnimationId = null;
+                    if (cameraStream) {
+                        cameraStream.getTracks().forEach(track => track.stop());
+                        cameraStream = null;
+                    }
+                    videoElement.pause();
+                    videoElement.srcObject = null;
+                }
+            };
 
             try {
                 cameraFrameReadyResolved = false;
                 const firstFramePromise = new Promise(resolve => {
                     resolveCameraFrameReady = resolve;
                 });
-                await camera.start();
 
-                // camera.start()の完了だけでなく、MediaPipeの映像処理が実際に始まるまで待つ
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('getUserMedia-unavailable');
+                }
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                videoElement.srcObject = cameraStream;
+                videoElement.muted = true;
+                videoElement.playsInline = true;
+                await videoElement.play();
+
+                const sendFrame = async () => {
+                    if (!isRunning || !videoElement.srcObject || videoElement.readyState < 2) return;
+                    try { await pose.send({image: videoElement}); } catch (e) {}
+                    if (isRunning) cameraAnimationId = requestAnimationFrame(sendFrame);
+                };
+                cameraAnimationId = requestAnimationFrame(sendFrame);
+
+                // 実際のAI映像処理が始まるまで待機
                 const frameTimeout = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('camera-frame-timeout')), 12000)
+                    setTimeout(() => reject(new Error('camera-frame-timeout')), 15000)
                 );
                 await Promise.race([firstFramePromise, frameTimeout]);
 
@@ -802,7 +839,9 @@
                     statusCard.textContent = '練習モードです。自由に腕を振ってみましょう。';
                 }
             } catch (error) {
-                alert("カメラの起動に失敗しました。カメラへのアクセスを許可しているか確認してください。");
+                if (camera && typeof camera.stop === 'function') camera.stop();
+                const reason = error && error.name ? error.name : (error && error.message ? error.message : 'unknown');
+                alert("カメラを起動できませんでした。\nSafariのカメラ許可と、ほかのアプリがカメラを使用していないことをご確認ください。\n（エラー：" + reason + "）");
                 loadingIndicator.classList.add('hidden');
                 document.getElementById('controls').classList.remove('hidden');
                 isRunning = false;
