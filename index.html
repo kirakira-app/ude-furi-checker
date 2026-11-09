@@ -128,12 +128,38 @@
         let countdownTimer = null, countdownEndAt = 0, countdownActive = false, countdownLabel = '';
         const music = document.getElementById('challenge-music');
 
+        // iPhone/iPad Safari向け：最初のユーザー操作中に音楽要素を一度再生して
+        // 再生許可を取得しておく（無音で行い、カウントダウン中は聞こえません）。
+        function unlockChallengeMusic() {
+            music.muted = true;
+            music.volume = 0;
+            const unlockPromise = music.play();
+            if (unlockPromise && typeof unlockPromise.then === 'function') {
+                unlockPromise.then(() => {
+                    music.pause();
+                    try { music.currentTime = 0; } catch (e) {}
+                    music.muted = false;
+                    music.volume = 1;
+                }).catch(() => {
+                    music.muted = false;
+                    music.volume = 1;
+                });
+            } else {
+                music.pause();
+                music.muted = false;
+                music.volume = 1;
+            }
+        }
+
         function selectMode(mode) {
             if (selectedMode === mode) return;
             // モード変更時はチャレンジの時間・音楽を安全に終了し、判定回数をリセット
             stopChallengeClock(true);
             stopCountdown();
             selectedMode = mode;
+            // カメラ起動後に練習モードからチャレンジへ切り替えた場合も、
+            // このモード選択タップを使ってiOSの音楽再生許可を取得する。
+            if (mode === 'challenge' && isRunning) unlockChallengeMusic();
             resetScore();
             document.getElementById('timer-box').style.display = mode === 'challenge' ? 'block' : 'none';
             document.getElementById('timer').textContent = '60';
@@ -402,9 +428,15 @@
             document.getElementById('timer-box').style.display = 'block';
             challengeEndAt = Date.now() + 60000;
             document.getElementById('timer').textContent = '60';
+            music.muted = false;
             music.volume = 1;
-            music.currentTime = 0;
-            music.play().catch(() => { modeNote.textContent = '音楽を再生できません。端末の音量・設定を確認してください。'; });
+            try { music.currentTime = 0; } catch (e) {}
+            const playPromise = music.play();
+            if (playPromise && typeof playPromise.catch === 'function') {
+                playPromise.catch(() => {
+                    modeNote.textContent = '音楽を再生できません。もう一度スタート操作を行うか、端末の音量・設定を確認してください。';
+                });
+            }
             challengeTimer = setInterval(() => {
                 const secondsLeft = Math.max(0, (challengeEndAt - Date.now()) / 1000);
                 const remaining = Math.ceil(secondsLeft);
@@ -611,7 +643,7 @@
                 canvasCtx.fillText(label, x + boxW/2, y + boxH/2);
                 canvasCtx.restore();
             }
-            // 練習開始前の3・2・1カウントダウン
+            // チャレンジ開始前の3・2・1カウントダウン
             if (countdownActive && countdownLabel) {
                 canvasCtx.save();
                 canvasCtx.fillStyle = 'rgba(8, 20, 40, 0.68)';
@@ -636,6 +668,8 @@
             statusCard.innerText = 'カメラとAIモデルを初期化中...';
 
             initAudio();
+            // clickイベント内（ユーザー操作の有効な範囲）で音楽要素の再生許可を取得
+            if (selectedMode === 'challenge') unlockChallengeMusic();
 
             pose = new Pose({locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`;
