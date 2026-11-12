@@ -144,7 +144,7 @@
         function unlockMusicSilentlyFromUserTap() {
             music.pause();
             music.muted = true;
-            music.volume = 0;
+            setMusicGain(0);
             try { music.currentTime = 0; } catch (e) {}
             const p = music.play();
             if (p && typeof p.then === 'function') {
@@ -152,18 +152,18 @@
                     music.pause();
                     try { music.currentTime = 0; } catch (e) {}
                     music.muted = true;
-                    music.volume = 0;
+                    setMusicGain(0);
                     musicUnlocked = true;
                 }).catch(() => {
                     music.pause();
                     music.muted = true;
-                    music.volume = 0;
+                    setMusicGain(0);
                     musicUnlocked = false;
                 });
             } else {
                 music.pause();
                 music.muted = true;
-                music.volume = 0;
+                setMusicGain(0);
                 musicUnlocked = true;
             }
         }
@@ -263,15 +263,40 @@
         let cameraFrameReadyResolved = false;
 
         let audioCtx;
+        let musicSourceNode = null;
+        let musicGainNode = null;
         let lastBeepTime = 0;
 
         function initAudio() {
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
+
+            // Web Audio経由で音量を調整。iOS Safariでもフェードアウトを安定させる。
+            if (!musicSourceNode && audioCtx && music) {
+                try {
+                    musicSourceNode = audioCtx.createMediaElementSource(music);
+                    musicGainNode = audioCtx.createGain();
+                    musicSourceNode.connect(musicGainNode);
+                    musicGainNode.connect(audioCtx.destination);
+                } catch (e) {
+                    musicSourceNode = null;
+                    musicGainNode = null;
+                }
             }
+
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function setMusicGain(value) {
+            const gain = Math.max(0, Math.min(1, value));
+            if (musicGainNode && audioCtx) {
+                const now = audioCtx.currentTime;
+                musicGainNode.gain.cancelScheduledValues(now);
+                musicGainNode.gain.setValueAtTime(gain, now);
+            }
+            // Web Audio非対応時のフォールバック
+            try { music.volume = gain; } catch (e) {}
         }
 
         function playBeep() {
@@ -474,7 +499,7 @@
             if (challengeTimer) clearInterval(challengeTimer);
             challengeTimer = null;
             music.pause();
-            music.volume = 1;
+            setMusicGain(1);
             if (resetMusic) { try { music.currentTime = 0; } catch(e) {} }
         }
         function stopCountdown() {
@@ -519,7 +544,7 @@
             // 音楽はカメラ映像の初回描画後、3・2・1のカウントダウン終了時だけ再生
             music.pause();
             music.muted = false;
-            music.volume = 1;
+            setMusicGain(1);
             try { music.currentTime = 0; } catch (e) {}
             const playPromise = music.play();
             if (playPromise && typeof playPromise.catch === 'function') {
@@ -532,8 +557,11 @@
                 const secondsLeft = Math.max(0, (challengeEndAt - Date.now()) / 1000);
                 const remaining = Math.ceil(secondsLeft);
                 document.getElementById('timer').textContent = remaining;
-                // 終了3秒前から、残り時間に比例して音量を下げる
-                music.volume = secondsLeft <= 3 ? Math.max(0, Math.min(1, secondsLeft / 3)) : 1;
+                // 終了3秒前から、GainNodeで音量を直線的に下げる
+                const fadeGain = secondsLeft <= 3
+                    ? Math.max(0, Math.min(1, secondsLeft / 3))
+                    : 1;
+                setMusicGain(fadeGain);
                 if (secondsLeft <= 0) finishChallenge();
             }, 50);
         }
@@ -804,7 +832,7 @@
             } else {
                 music.pause();
                 music.muted = true;
-                music.volume = 0;
+                setMusicGain(0);
             }
 
             pose = new Pose({locateFile: (file) => {
@@ -880,7 +908,7 @@
                     startChallengeCountdown();
                 } else {
                     music.muted = false;
-                    music.volume = 1;
+                    setMusicGain(1);
                     statusCard.textContent = '練習モードです。自由に腕を振ってみましょう。';
                 }
             } catch (error) {
